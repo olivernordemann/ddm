@@ -35,16 +35,32 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	}
 
 	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class LargeMessageInitializer {
+		private Serialization serialization;
+		private Integer serializerId;
+		private String manifest;
+		private Integer sequenceLength;
+		private ActorRef sender;
+		private ActorRef receiver;
+	}
+
+	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class BytesMessage<T> implements Serializable {
 		private static final long serialVersionUID = 4057807743872319842L;
 		private T bytes;
-		private ActorRef sender;
-		private ActorRef receiver;
+		private Integer sequenceNumber;
 	}
 	
 	/////////////////
 	// Actor State //
 	/////////////////
+
+	private Serialization serialization;
+	private Integer serializerId;
+	private String manifest;
+	private Integer sequenceLength;
+	private ActorRef sender;
+	private ActorRef receiver;
 	
 	/////////////////////
 	// Actor Lifecycle //
@@ -58,14 +74,11 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	public Receive createReceive() {
 		return receiveBuilder()
 				.match(LargeMessage.class, this::handle)
+				.match(LargeMessageInitializer.class, this::handle)
 				.match(BytesMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
-
-	private Serialization serialization = SerializationExtension.get(this.context().system());
-	private Integer serializerId;
-	private String manifest;
 
 	private void handle(LargeMessage<?> message) {
 		ActorRef receiver = message.getReceiver();
@@ -78,13 +91,21 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		// 3. Send the object via Akka's http client-server component.
 		// 4. Other ideas ...
 
+		serialization = SerializationExtension.get(this.context().system());
 		byte[] bytes = serialization.serialize(message.getMessage()).get();
 		serializerId = serialization.findSerializerFor(message.getMessage()).identifier();
 		manifest = Serializers.manifestFor(serialization.findSerializerFor(message.getMessage()), message.getMessage());
 
-		receiverProxy.tell(new BytesMessage<>(serializerId, this.sender(), message.getReceiver()), this.self());
-		receiverProxy.tell(new BytesMessage<>(manifest, this.sender(), message.getReceiver()), this.self());
-		receiverProxy.tell(new BytesMessage<>(bytes, this.sender(), message.getReceiver()), this.self());
+		receiverProxy.tell(new LargeMessageInitializer(
+			serialization,
+			serializerId,
+			manifest,
+			bytes.length,
+			this.sender(),
+			message.getReceiver()
+		), this.self());
+
+		receiverProxy.tell(new BytesMessage<>(bytes, 0), this.self());
 
 		/* for (int i = 0; i < bytes.length; i++) {
 			receiverProxy.tell(new BytesMessage<>(message.getMessage(), this.sender(), message.getReceiver()), this.self());
@@ -92,12 +113,23 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 
 	}
 
+	private void handle(LargeMessageInitializer message) {
+		serialization = message.getSerialization();
+		serializerId = message.getSerializerId();
+		manifest = message.getManifest();
+		sequenceLength = message.getSequenceLength();
+		sender = message.getSender();
+		receiver = message.getReceiver();
+	}
+
 	private void handle(BytesMessage<?> message) {
 		// Reassemble the message content, deserialize it and/or load the content from some local location before forwarding its content.
-		if (serializerId == null) serializerId = (Integer) message.getBytes();
-		else if (manifest == null) manifest = (String) message.getBytes();
-		else {
-			message.getReceiver().tell(serialization.deserialize( (byte[]) message.getBytes(), serializerId, manifest).get(), message.getSender());
-		}
+		receiver.tell(
+			serialization.deserialize(
+				(byte[]) message.getBytes(),
+				serializerId,
+				manifest
+			).get(),
+		sender);
 	}
 }
