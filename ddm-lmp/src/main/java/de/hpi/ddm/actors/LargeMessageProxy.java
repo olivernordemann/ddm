@@ -1,12 +1,14 @@
 package de.hpi.ddm.actors;
 
 import java.io.Serializable;
+import java.util.Arrays;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
 import akka.actor.ActorSelection;
 import akka.actor.Props;
 import akka.serialization.*;
+import jdk.nashorn.internal.ir.Block;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -61,6 +63,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	private Integer sequenceLength;
 	private ActorRef sender;
 	private ActorRef receiver;
+	final private int BlockSize = 1024;
 	
 	/////////////////////
 	// Actor Lifecycle //
@@ -80,6 +83,31 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 				.build();
 	}
 
+	public static byte[][] divideArray(byte[] source, int chunksize) {
+		byte[][] ret = new byte[(int)Math.ceil(source.length / (double)chunksize)][chunksize];
+		int start = 0;
+		for(int i = 0; i < ret.length; i++) {
+			ret[i] = Arrays.copyOfRange(source,start, start + chunksize);
+			start += chunksize ;
+		}
+		return ret;
+	}
+
+	/*private int getNumberOfChunks(byte[] bytes) {
+		return bytes.length/BlockSize;
+	}*/
+
+	private byte[][] createArrayOfByteArray(byte[] bytes) {
+		//int numberOfChunks=getNumberOfChunks(bytes);
+		byte[][] arrayOfChunks = new byte[(int)Math.ceil(bytes.length / (double)BlockSize)][BlockSize];
+		int start = 0;
+		for(int i = 0; i < arrayOfChunks.length; i++) {
+			arrayOfChunks[i] = Arrays.copyOfRange(bytes, start, start + BlockSize);
+			start += BlockSize;
+		}
+		return arrayOfChunks;
+	}
+
 	private void handle(LargeMessage<?> message) {
 		ActorRef receiver = message.getReceiver();
 		ActorSelection receiverProxy = this.context().actorSelection(receiver.path().child(DEFAULT_NAME));
@@ -96,6 +124,8 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		serializerId = serialization.findSerializerFor(message.getMessage()).identifier();
 		manifest = Serializers.manifestFor(serialization.findSerializerFor(message.getMessage()), message.getMessage());
 
+		byte[][] arrayOfByteArray = createArrayOfByteArray(bytes);
+
 		receiverProxy.tell(new LargeMessageInitializer(
 			serialization,
 			serializerId,
@@ -105,8 +135,9 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 			message.getReceiver()
 		), this.self());
 
-		receiverProxy.tell(new BytesMessage<>(bytes, 0), this.self());
-
+		for(byte[] innerBytes : arrayOfByteArray) {
+			receiverProxy.tell(new BytesMessage<>(innerBytes, 0), this.self());
+		}
 		/* for (int i = 0; i < bytes.length; i++) {
 			receiverProxy.tell(new BytesMessage<>(message.getMessage(), this.sender(), message.getReceiver()), this.self());
 		} */
