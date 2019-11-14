@@ -41,7 +41,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		private static final long serialVersionUID = 3444507743872319842L;
 		private Integer largeMessageID;
 		private Serialization serialization;
-		private Integer serializerId;
+		private Integer serializerID;
 		private String manifest;
 		private Integer sequenceLength;
 		private ActorRef sender;
@@ -51,8 +51,9 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class BytesMessage<T> implements Serializable {
 		private static final long serialVersionUID = 4057807743872319842L;
+		private Integer largeMessageID;
 		private T bytes;
-		private Integer sequenceNumber;
+		private Integer sequenceID;
 	}
 	
 	/////////////////
@@ -61,12 +62,14 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 
 	private Integer largeMessageID;
 	private Serialization serialization;
-	private Integer serializerId;
+	private Integer serializerID;
 	private String manifest;
 	private Integer sequenceLength;
 	private ActorRef sender;
 	private ActorRef receiver;
-	final private int BlockSize = 1024;
+	final private int BlockSize = 4048;
+	private byte[] receivedBytes;
+	private Integer receivedChunks;
 	
 	/////////////////////
 	// Actor Lifecycle //
@@ -86,28 +89,15 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 				.build();
 	}
 
-	public static byte[][] divideArray(byte[] source, int chunksize) {
-		byte[][] ret = new byte[(int)Math.ceil(source.length / (double)chunksize)][chunksize];
-		int start = 0;
-		for(int i = 0; i < ret.length; i++) {
-			ret[i] = Arrays.copyOfRange(source,start, start + chunksize);
-			start += chunksize ;
-		}
-		return ret;
-	}
-
-	/*private int getNumberOfChunks(byte[] bytes) {
-		return bytes.length/BlockSize;
-	}*/
-
 	private byte[][] createArrayOfByteArray(byte[] bytes) {
-		//int numberOfChunks=getNumberOfChunks(bytes);
 		byte[][] arrayOfChunks = new byte[(int)Math.ceil(bytes.length / (double)BlockSize)][BlockSize];
 		int start = 0;
 		for(int i = 0; i < arrayOfChunks.length; i++) {
-			arrayOfChunks[i] = Arrays.copyOfRange(bytes, start, (start + BlockSize));
+			int end = bytes.length > (start + BlockSize) ? (start + BlockSize) : bytes.length;
+			arrayOfChunks[i] = Arrays.copyOfRange(bytes, start, end);
 			start += BlockSize;
 		}
+		System.out.println("start: " + start);
 		return arrayOfChunks;
 	}
 
@@ -123,52 +113,64 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		// 4. Other ideas ...
 
 		serialization = SerializationExtension.get(this.context().system());
-		byte[] bytes = serialization.serialize(message.getMessage()).get();
-		serializerId = serialization.findSerializerFor(message.getMessage()).identifier();
+		largeMessageID = 1;
+		serializerID = serialization.findSerializerFor(message.getMessage()).identifier();
 		manifest = Serializers.manifestFor(serialization.findSerializerFor(message.getMessage()), message.getMessage());
-
+		byte[] bytes = serialization.serialize(message.getMessage()).get();
 		byte[][] arrayOfByteArray = createArrayOfByteArray(bytes);
 
+		System.out.println("array array: " + arrayOfByteArray.length);
+
 		receiverProxy.tell(new LargeMessageInitializer(
+			largeMessageID,
 			serialization,
-			serializerId,
+			serializerID,
 			manifest,
 			bytes.length,
 			this.sender(),
 			message.getReceiver()
 		), this.self());
-		System.out.println("1");
-		//receiverProxy.tell(new BytesMessage<>(bytes, 0), this.self());
 
-		int ii = 0;
-		for(byte[] innerBytes : arrayOfByteArray) {
-			System.out.println("2");
-			receiverProxy.tell(new BytesMessage<>(innerBytes, ii), this.self());
-			ii++;
+		for(int sequenceID = 0; sequenceID < arrayOfByteArray.length; sequenceID++) {
+			receiverProxy.tell(new BytesMessage<>(largeMessageID, arrayOfByteArray[sequenceID], sequenceID), this.self());
 		}
-		/* for (int i = 0; i < bytes.length; i++) {
-			receiverProxy.tell(new BytesMessage<>(message.getMessage(), this.sender(), message.getReceiver()), this.self());
-		} */
 
 	}
 
 	private void handle(LargeMessageInitializer message) {
 		serialization = message.getSerialization();
-		serializerId = message.getSerializerId();
+		serializerID = message.getSerializerID();
 		manifest = message.getManifest();
 		sequenceLength = message.getSequenceLength();
 		sender = message.getSender();
 		receiver = message.getReceiver();
+
+		receivedBytes = new byte[sequenceLength];
+		System.out.println("seq len: " + sequenceLength);
+		receivedChunks = 0;
 	}
 
 	private void handle(BytesMessage<?> message) {
 		// Reassemble the message content, deserialize it and/or load the content from some local location before forwarding its content.
-		receiver.tell(
-			serialization.deserialize(
-				(byte[]) message.getBytes(),
-				serializerId,
-				manifest
-			).get(),
-		sender);
+		
+		System.out.println("seq bloc: " + message.getSequenceID() * BlockSize);
+		byte[] messageReceivedBytes = (byte[]) message.getBytes();
+		for (int i = 0; i < messageReceivedBytes.length; i++) {
+			byte recByte = messageReceivedBytes[i];
+			receivedBytes[message.getSequenceID() * BlockSize + i] = recByte;
+		}
+
+		receivedChunks++;
+		if(receivedChunks * BlockSize >= sequenceLength) {
+			System.out.println("rec chu: " + receivedChunks);
+			receiver.tell(
+				serialization.deserialize(
+					receivedBytes,
+					serializerID,
+					manifest
+				).get(),
+			sender);
+		}
+		
 	}
 }
