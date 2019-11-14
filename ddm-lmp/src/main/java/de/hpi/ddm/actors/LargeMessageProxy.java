@@ -102,7 +102,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		byte[][] arrayOfChunks = new byte[(int)Math.ceil(bytes.length / (double)BlockSize)][BlockSize];
 		int start = 0;
 		for(int i = 0; i < arrayOfChunks.length; i++) {
-			arrayOfChunks[i] = Arrays.copyOfRange(bytes, start, start + BlockSize);
+			arrayOfChunks[i] = Arrays.copyOfRange(bytes, start, (start + BlockSize));
 			start += BlockSize;
 		}
 		return arrayOfChunks;
@@ -134,9 +134,14 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 			this.sender(),
 			message.getReceiver()
 		), this.self());
+		System.out.println("1");
+		//receiverProxy.tell(new BytesMessage<>(bytes, 0), this.self());
 
+		int ii = 0;
 		for(byte[] innerBytes : arrayOfByteArray) {
-			receiverProxy.tell(new BytesMessage<>(innerBytes, 0), this.self());
+			System.out.println("2");
+			receiverProxy.tell(new BytesMessage<>(innerBytes, ii), this.self());
+			ii++;
 		}
 		/* for (int i = 0; i < bytes.length; i++) {
 			receiverProxy.tell(new BytesMessage<>(message.getMessage(), this.sender(), message.getReceiver()), this.self());
