@@ -37,7 +37,9 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	}
 
 	@Data @NoArgsConstructor @AllArgsConstructor
-	public static class LargeMessageInitializer {
+	public static class LargeMessageInitializer implements Serializable {
+		private static final long serialVersionUID = 3444507743872319842L;
+		private Integer largeMessageID;
 		private Serialization serialization;
 		private Integer serializerId;
 		private String manifest;
@@ -57,6 +59,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	// Actor State //
 	/////////////////
 
+	private Integer largeMessageID;
 	private Serialization serialization;
 	private Integer serializerId;
 	private String manifest;
