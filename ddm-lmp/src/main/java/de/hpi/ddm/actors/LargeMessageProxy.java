@@ -2,6 +2,8 @@ package de.hpi.ddm.actors;
 
 import java.io.Serializable;
 import java.util.Arrays;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.UUID;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
@@ -39,8 +41,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class LargeMessageInitializer implements Serializable {
 		private static final long serialVersionUID = 3444507743872319842L;
-		private Integer largeMessageID;
-		private Serialization serialization;
+		private String largeMessageID;
 		private Integer serializerID;
 		private String manifest;
 		private Integer sequenceLength;
@@ -49,9 +50,15 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	}
 
 	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class LargeMessageReady implements Serializable {
+		private static final long serialVersionUID = 7444507743872319842L;
+		private String largeMessageID;
+	}
+
+	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class BytesMessage<T> implements Serializable {
 		private static final long serialVersionUID = 4057807743872319842L;
-		private Integer largeMessageID;
+		private String largeMessageID;
 		private T bytes;
 		private Integer sequenceID;
 	}
@@ -60,16 +67,17 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	// Actor State //
 	/////////////////
 
-	private Integer largeMessageID;
-	private Serialization serialization;
-	private Integer serializerID;
-	private String manifest;
-	private Integer sequenceLength;
-	private ActorRef sender;
-	private ActorRef receiver;
-	final private int BlockSize = 4048;
-	private byte[] receivedBytes;
-	private Integer receivedChunks;
+	final private int BlockSize = 4096;
+	Serialization serialization = SerializationExtension.get(this.context().system());
+
+	private ConcurrentHashMap<String,Integer> serializerID = new ConcurrentHashMap<String,Integer>();
+	private ConcurrentHashMap<String,String> manifest = new ConcurrentHashMap<String,String>();
+	private ConcurrentHashMap<String,Integer> sequenceLength = new ConcurrentHashMap<String,Integer>();
+	private ConcurrentHashMap<String,ActorRef> sender = new ConcurrentHashMap<String,ActorRef>();
+	private ConcurrentHashMap<String,ActorRef> receiverMap = new ConcurrentHashMap<String,ActorRef>();
+	private ConcurrentHashMap<String,byte[][]> arrayOfByteArray = new ConcurrentHashMap<String,byte[][]>();
+	private ConcurrentHashMap<String,byte[]> receivedBytes = new ConcurrentHashMap<String,byte[]>();
+	private ConcurrentHashMap<String,Integer> receivedChunks = new ConcurrentHashMap<String,Integer>();
 	
 	/////////////////////
 	// Actor Lifecycle //
@@ -84,6 +92,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		return receiveBuilder()
 				.match(LargeMessage.class, this::handle)
 				.match(LargeMessageInitializer.class, this::handle)
+				.match(LargeMessageReady.class, this::handle)
 				.match(BytesMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
@@ -97,79 +106,72 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 			arrayOfChunks[i] = Arrays.copyOfRange(bytes, start, end);
 			start += BlockSize;
 		}
-		System.out.println("start: " + start);
 		return arrayOfChunks;
 	}
 
 	private void handle(LargeMessage<?> message) {
 		ActorRef receiver = message.getReceiver();
 		ActorSelection receiverProxy = this.context().actorSelection(receiver.path().child(DEFAULT_NAME));
-		
-		// This will definitely fail in a distributed setting if the serialized message is large!
-		// Solution options:
-		// 1. Serialize the object and send its bytes batch-wise (make sure to use artery's side channel then).
-		// 2. Serialize the object and send its bytes via Akka streaming.
-		// 3. Send the object via Akka's http client-server component.
-		// 4. Other ideas ...
-
-		serialization = SerializationExtension.get(this.context().system());
-		largeMessageID = 1;
-		serializerID = serialization.findSerializerFor(message.getMessage()).identifier();
-		manifest = Serializers.manifestFor(serialization.findSerializerFor(message.getMessage()), message.getMessage());
+		String largeMessageID = UUID.randomUUID().toString();
 		byte[] bytes = serialization.serialize(message.getMessage()).get();
-		byte[][] arrayOfByteArray = createArrayOfByteArray(bytes);
-
-		System.out.println("array array: " + arrayOfByteArray.length);
+		arrayOfByteArray.put(largeMessageID, createArrayOfByteArray(bytes));
 
 		receiverProxy.tell(new LargeMessageInitializer(
 			largeMessageID,
-			serialization,
-			serializerID,
-			manifest,
+			serialization.findSerializerFor(message.getMessage()).identifier(),
+			Serializers.manifestFor(serialization.findSerializerFor(message.getMessage()), message.getMessage()),
 			bytes.length,
 			this.sender(),
-			message.getReceiver()
+			receiver
 		), this.self());
-
-		for(int sequenceID = 0; sequenceID < arrayOfByteArray.length; sequenceID++) {
-			receiverProxy.tell(new BytesMessage<>(largeMessageID, arrayOfByteArray[sequenceID], sequenceID), this.self());
-		}
 
 	}
 
 	private void handle(LargeMessageInitializer message) {
-		serialization = message.getSerialization();
-		serializerID = message.getSerializerID();
-		manifest = message.getManifest();
-		sequenceLength = message.getSequenceLength();
-		sender = message.getSender();
-		receiver = message.getReceiver();
+		String largeMessageID = message.getLargeMessageID();
 
-		receivedBytes = new byte[sequenceLength];
-		System.out.println("seq len: " + sequenceLength);
-		receivedChunks = 0;
+		serializerID.put(largeMessageID, message.getSerializerID());
+		manifest.put(largeMessageID, message.getManifest());
+		sequenceLength.put(largeMessageID, message.getSequenceLength());
+		sender.put(largeMessageID, message.getSender());
+		receiverMap.put(largeMessageID, message.getReceiver());
+		receivedBytes.put(largeMessageID, new byte[sequenceLength.get(largeMessageID)]);
+		receivedChunks.put(largeMessageID, 0);
+
+		this.sender().tell(new LargeMessageReady(largeMessageID), this.self());
+	}
+
+	private void handle(LargeMessageReady message) {
+		String largeMessageID = message.getLargeMessageID();
+
+		for(int sequenceID = 0; sequenceID < arrayOfByteArray.get(largeMessageID).length; sequenceID++) {
+			this.sender().tell(new BytesMessage<>(
+				largeMessageID,
+				arrayOfByteArray.get(largeMessageID)[sequenceID],
+				sequenceID
+			), this.self());
+		}
 	}
 
 	private void handle(BytesMessage<?> message) {
 		// Reassemble the message content, deserialize it and/or load the content from some local location before forwarding its content.
-		
-		System.out.println("seq bloc: " + message.getSequenceID() * BlockSize);
+		String largeMessageID = message.getLargeMessageID();
+
 		byte[] messageReceivedBytes = (byte[]) message.getBytes();
 		for (int i = 0; i < messageReceivedBytes.length; i++) {
 			byte recByte = messageReceivedBytes[i];
-			receivedBytes[message.getSequenceID() * BlockSize + i] = recByte;
+			receivedBytes.get(largeMessageID)[message.getSequenceID() * BlockSize + i] = recByte;
 		}
 
-		receivedChunks++;
-		if(receivedChunks * BlockSize >= sequenceLength) {
-			System.out.println("rec chu: " + receivedChunks);
-			receiver.tell(
+		receivedChunks.put(largeMessageID, receivedChunks.get(largeMessageID) + 1);
+		if(receivedChunks.get(largeMessageID) * BlockSize >= sequenceLength.get(largeMessageID)) {
+			receiverMap.get(largeMessageID).tell(
 				serialization.deserialize(
-					receivedBytes,
-					serializerID,
-					manifest
+					receivedBytes.get(largeMessageID),
+					serializerID.get(largeMessageID),
+					manifest.get(largeMessageID)
 				).get(),
-			sender);
+			sender.get(largeMessageID));
 		}
 		
 	}
