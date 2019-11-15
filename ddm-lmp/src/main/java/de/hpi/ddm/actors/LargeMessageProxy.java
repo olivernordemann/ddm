@@ -67,7 +67,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	// Actor State //
 	/////////////////
 
-	final private int BlockSize = 4096;
+	final private int BlockSize = 32768;
 	Serialization serialization = SerializationExtension.get(this.context().system());
 
 	private ConcurrentHashMap<String,Integer> serializerID = new ConcurrentHashMap<String,Integer>();
