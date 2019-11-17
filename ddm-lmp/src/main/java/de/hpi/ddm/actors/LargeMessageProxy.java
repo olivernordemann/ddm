@@ -50,17 +50,18 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 	}
 
 	@Data @NoArgsConstructor @AllArgsConstructor
-	public static class LargeMessageReady implements Serializable {
-		private static final long serialVersionUID = 7444507743872319842L;
+	public static class BytesMessageReady implements Serializable {
+		private static final long serialVersionUID = 3337807743872319842L;
 		private String largeMessageID;
+		private Integer sequenceID;
 	}
 
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class BytesMessage<T> implements Serializable {
 		private static final long serialVersionUID = 4057807743872319842L;
 		private String largeMessageID;
-		private T bytes;
 		private Integer sequenceID;
+		private T bytes;
 	}
 	
 	/////////////////
@@ -92,7 +93,7 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		return receiveBuilder()
 				.match(LargeMessage.class, this::handle)
 				.match(LargeMessageInitializer.class, this::handle)
-				.match(LargeMessageReady.class, this::handle)
+				.match(BytesMessageReady.class, this::handle)
 				.match(BytesMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
@@ -138,32 +139,32 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 		receivedBytes.put(largeMessageID, new byte[sequenceLength.get(largeMessageID)]);
 		receivedChunks.put(largeMessageID, 0);
 
-		this.sender().tell(new LargeMessageReady(largeMessageID), this.self());
+		this.sender().tell(new BytesMessageReady(largeMessageID, 0), this.self());
 	}
 
-	private void handle(LargeMessageReady message) {
+	private void handle(BytesMessageReady message) {
 		String largeMessageID = message.getLargeMessageID();
+		Integer sequenceID = message.getSequenceID();
 
-		for(int sequenceID = 0; sequenceID < arrayOfByteArray.get(largeMessageID).length; sequenceID++) {
-			this.sender().tell(new BytesMessage<>(
-				largeMessageID,
-				arrayOfByteArray.get(largeMessageID)[sequenceID],
-				sequenceID
-			), this.self());
-		}
+		this.sender().tell(new BytesMessage<>(
+			largeMessageID,
+			sequenceID,
+			arrayOfByteArray.get(largeMessageID)[sequenceID]
+		), this.self());
 	}
 
 	private void handle(BytesMessage<?> message) {
-		// Reassemble the message content, deserialize it and/or load the content from some local location before forwarding its content.
 		String largeMessageID = message.getLargeMessageID();
-
 		byte[] messageReceivedBytes = (byte[]) message.getBytes();
+		Integer sequenceID = message.getSequenceID();
+
 		for (int i = 0; i < messageReceivedBytes.length; i++) {
 			byte recByte = messageReceivedBytes[i];
-			receivedBytes.get(largeMessageID)[message.getSequenceID() * BlockSize + i] = recByte;
+			receivedBytes.get(largeMessageID)[sequenceID * BlockSize + i] = recByte;
 		}
 
 		receivedChunks.put(largeMessageID, receivedChunks.get(largeMessageID) + 1);
+
 		if(receivedChunks.get(largeMessageID) * BlockSize >= sequenceLength.get(largeMessageID)) {
 			receiverMap.get(largeMessageID).tell(
 				serialization.deserialize(
@@ -172,7 +173,9 @@ public class LargeMessageProxy extends AbstractLoggingActor {
 					manifest.get(largeMessageID)
 				).get(),
 			sender.get(largeMessageID));
+		} else {
+			Integer nextSequenceID = sequenceID + 1;
+			this.sender().tell(new BytesMessageReady(largeMessageID, nextSequenceID), this.self());
 		}
-		
 	}
 }
