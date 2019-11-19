@@ -3,6 +3,7 @@ package de.hpi.ddm.actors;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 
 import akka.actor.AbstractLoggingActor;
@@ -100,8 +101,44 @@ public class Master extends AbstractLoggingActor {
 		// 2. If we process the batches early, we can achieve latency hiding. /////////////////////////////////
 		// TODO: Implement the processing of the data for the concrete assignment. ////////////////////////////
 		///////////////////////////////////////////////////////////////////////////////////////////////////////
-		
+
+		List<String[]> lines = message.getLines();
+		String[] firstLine = lines.get(0);
+
+		String possiblePasswordChars = firstLine[2]; // get possible password chars
+		int passwordLength = Integer.parseInt(firstLine[3]); // get password length
+		int numberOfHints = firstLine.length - 5; // get number of hints
+
+		System.out.println(possiblePasswordChars);
+		System.out.println(passwordLength);
+		System.out.println(numberOfHints);
+
+		// calculate minNumberOfHints before crack password (maxNumberOfHints < verfügbare Hints)
+
+		// create 1. hintHashmap with all hints, and ArrayList with crackedHint (empty at start) and List of line-IDs !!!
+		ArrayList<String> crackedHintPlusIDs = new ArrayList<String>(); // Array with crackedHint, id1, id2, id3, ...
+		HashMap<String, ArrayList<String>> hintHashmap = new HashMap<String, ArrayList<String>>();
+		for (String[] line : lines) {
+			for (int hintNr = 4; hintNr < (numberOfHints + 4); hintNr++) {
+				if(!hintHashmap.containsKey(line[hintNr])) {
+					crackedHintPlusIDs.add("not_cracked");
+					crackedHintPlusIDs.add(line[0]);
+					hintHashmap.put(line[hintNr], crackedHintPlusIDs);
+				} else {
+					crackedHintPlusIDs = hintHashmap.get(line[hintNr]);
+					crackedHintPlusIDs.add(line[0]);
+					hintHashmap.put(line[hintNr], crackedHintPlusIDs);
+				}
+			}
+		}
+		// create 2. hashmap with line-IDs, password-hash, excluded chars and numberOfHintsLeft
+
+
+
 		if (message.getLines().isEmpty()) {
+			// 1. for every possible password char:
+			//		send Worker message with (char, hintHashmap)
+
 			this.collector.tell(new Collector.PrintMessage(), this.self());
 			this.terminate();
 			return;

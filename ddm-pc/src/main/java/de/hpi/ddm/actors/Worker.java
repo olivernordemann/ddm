@@ -70,6 +70,7 @@ public class Worker extends AbstractLoggingActor {
 				.match(CurrentClusterState.class, this::handle)
 				.match(MemberUp.class, this::handle)
 				.match(MemberRemoved.class, this::handle)
+				.match(Master.BatchMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
@@ -98,6 +99,18 @@ public class Worker extends AbstractLoggingActor {
 	private void handle(MemberRemoved message) {
 		if (this.masterSystem.equals(message.member()))
 			this.self().tell(PoisonPill.getInstance(), ActorRef.noSender());
+	}
+
+	private void handle(Master.BatchMessage message) {
+		List<String[]> lines = message.getLines();
+
+		for (String[] line : lines) {
+			String chars = line[2];
+			for (int i = 5; i < line.length; i++) {
+
+			}
+		}
+
 	}
 	
 	private String hash(String line) {
