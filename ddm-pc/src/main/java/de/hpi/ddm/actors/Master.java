@@ -86,14 +86,14 @@ public class Master extends AbstractLoggingActor {
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class HintInfo {
 		private char hintChar;
-		private ArrayList<String> IDList;
+		private ArrayList<String> IDList = new ArrayList<String>();
 	}
 
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class PasswordInfo {
 		private String passwordHash;
 		private String crackedPassword;
-		private ArrayList<Character> possibleChars;
+		private ArrayList<Character> possibleChars = new ArrayList<Character>();
 	}
 
 	private HashMap<String, HintInfo> hints = new HashMap<String, HintInfo>();
@@ -184,7 +184,7 @@ public class Master extends AbstractLoggingActor {
 					hints.put(line[hintNr], crackedHintPlusIDs);
 				} else {
 					HintInfo crackedHintPlusIDs = hints.get(line[hintNr]);
-					crackedHintPlusIDs.getIDList.add(line[0]);
+					crackedHintPlusIDs.getIDList().add(line[0]);
 					hints.put(line[hintNr], crackedHintPlusIDs);
 				}
 			}
@@ -268,7 +268,8 @@ public class Master extends AbstractLoggingActor {
 			ArrayList<String> affectedPasswordLines = hint.getIDList();
 			for(String line : affectedPasswordLines) {
 				PasswordInfo passwordInfo = passwords.get(line);
-				ArrayList<Character> possibleChars = passwordInfo.getPossibleChars.remove(solvedHintChar);
+				passwordInfo.getPossibleChars().remove(solvedHintChar);
+				ArrayList<Character> possibleChars = passwordInfo.getPossibleChars();
 				passwordInfo.setPossibleChars(possibleChars);
 				if(possibleChars.size() <= minPossibleChars && passwordInfo.getCrackedPassword() == null) {
 					char[] possibleCharsArray = getCharArrayFromArrayList(possibleChars);
@@ -286,6 +287,7 @@ public class Master extends AbstractLoggingActor {
 				return possibleChar;
 			}
 		}
+		return Character.MIN_VALUE;
 	}
 
 	protected void handle(PasswordCrackedMessage message) {
