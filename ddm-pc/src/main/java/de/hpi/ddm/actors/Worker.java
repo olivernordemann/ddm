@@ -1,9 +1,12 @@
 package de.hpi.ddm.actors;
 
+import java.io.Serializable;
 import java.io.UnsupportedEncodingException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.HashMap;
 import java.util.List;
+import java.util.ArrayList;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
@@ -15,6 +18,9 @@ import akka.cluster.ClusterEvent.MemberRemoved;
 import akka.cluster.ClusterEvent.MemberUp;
 import akka.cluster.Member;
 import akka.cluster.MemberStatus;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 import de.hpi.ddm.MasterSystem;
 
 public class Worker extends AbstractLoggingActor {
@@ -37,12 +43,34 @@ public class Worker extends AbstractLoggingActor {
 	// Actor Messages //
 	////////////////////
 
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class HintsMessage implements Serializable {
+		private static final long serialVersionUID = 4443040942748609598L;
+		private HashMap<String, Master.HintInfo> hints;
+	}
+	
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class SolveHintsMessage implements Serializable {
+		private static final long serialVersionUID = 5553040942748609598L;
+		private String charsToSearch;
+	}
+
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class CrackPasswordMessage implements Serializable {
+		private static final long serialVersionUID = 5673040942748609598L;
+		private String lineID;
+		private String passwordHash;
+		private String possibleChars;
+	}
+
 	/////////////////
 	// Actor State //
 	/////////////////
 
 	private Member masterSystem;
 	private final Cluster cluster;
+
+	private HashMap<String, Master.HintInfo> hints = new HashMap<String, Master.HintInfo>();
 	
 	/////////////////////
 	// Actor Lifecycle //
@@ -101,16 +129,39 @@ public class Worker extends AbstractLoggingActor {
 			this.self().tell(PoisonPill.getInstance(), ActorRef.noSender());
 	}
 
-	private void handle(Master.BatchMessage message) {
-		List<String[]> lines = message.getLines();
+	private void handle(SolveHintsMessage message) {
+		String charsToSearch = message.getCharsToSearch();
 
-		for (String[] line : lines) {
-			String chars = line[2];
-			for (int i = 5; i < line.length; i++) {
+		List<String> charPermutations = new ArrayList<String>();
+		this.heapPermutation(charsToSearch, charsToSearch.length(), charsToSearch.length(), charPermutations);
 
+		ArrayList<String[]> solvedHints = new ArrayList<String[]>();
+
+		for (String permutation : charPermutations) {
+			String permutationHash = hash(permutation);
+			if (hints.containsKey(permutationHash)) {
+				String[] solvedHint = {permutationHash, permutation};
+				solvedHints.add(solvedHint);
 			}
 		}
 
+		this.getSender().tell(new Master.HintsSolvedMessage(solvedHints));
+	}
+
+	private void handle(CrackPasswordMessage message) {
+		String lineID = message.getLineID();
+		String passwordHash = message.getPasswordHash();
+		String possibleChars = message.getPossibleChars();
+
+		List<String> charPermutations = new List<String>();
+		this.heapPermutation(possibleChars, possibleChars.length(), possibleChars.length(), charPermutations);
+
+		for (String permutation : charPermutations) {
+			String permutationHash = hash(permutation);
+			if (passwordHash == permutationHash) {
+				this.getSender().tell(new Master.PasswordCrackedMessage(lineID, permutation), this.self());
+			}
+		}
 	}
 	
 	private String hash(String line) {
