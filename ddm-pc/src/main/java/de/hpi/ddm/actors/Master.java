@@ -5,7 +5,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
-import java.util.ArrayList;
+import java.util.NavigableSet;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
@@ -77,24 +77,31 @@ public class Master extends AbstractLoggingActor {
 
 	private long startTime;
 
-	private String possiblePasswordChars;
+	private ArrayList<Character> possiblePasswordChars;
 	private int numberOfPossiblePasswordChars;
 	private int passwordLength;
 	private int numberOfHints;
-	private int numberOfHintsToCrack;
+	private int minPossibleChars;
 
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class HintInfo {
 		private char hintChar;
-		private String[] IDList;
+		private ArrayList<String> IDList;
+	}
+
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class PasswordInfo {
+		private String passwordHash;
+		private String crackedPassword;
+		private ArrayList<Character> possibleChars;
 	}
 
 	private HashMap<String, HintInfo> hints = new HashMap<String, HintInfo>();
 	// for passwords: String[] = {passwordHash, crackedPassword, possibleChars}
-	private HashMap<String, String[]> passwords = new HashMap<String, String[]>();
+	private HashMap<String, PasswordInfo> passwords = new HashMap<String, PasswordInfo>();
 
 	private HashMap<String, Boolean> searchedChars = new HashMap<String, Boolean>();
-	private String[] charCombinationsToSearch;
+	private ArrayList<ArrayList<Character>> charCombinationsToSearch = new ArrayList<ArrayList<Character>>();
 	
 	/////////////////////
 	// Actor Lifecycle //
@@ -139,31 +146,41 @@ public class Master extends AbstractLoggingActor {
 		List<String[]> lines = message.getLines();
 		String[] firstLine = lines.get(0);
 
-		String possiblePasswordChars = firstLine[2]; // get possible password chars
-		int numberOfPossiblePasswordChars = possiblePasswordChars.length();
+		ArrayList<Character> possiblePasswordChars = new ArrayList<Character>();
+		for (char possibleChar : firstLine[2].toCharArray()) {
+			possiblePasswordChars.add(new Character(possibleChar));
+		}
+
+		int numberOfPossiblePasswordChars = possiblePasswordChars.size();
 		// int numberOfPossibleHints = factorial(numberOfPossiblePasswordChars - 1);
 		int passwordLength = Integer.parseInt(firstLine[3]); // get password length
 		// int numberOfPossiblePasswords = numberOfPossiblePasswordChars ** passwordLength;
 		int numberOfHints = firstLine.length - 5; // get number of hints
 
-		// calculate minNumberOfHints before crack password (maxNumberOfHints < verfügbare Hints)
-		int numberOfHintsToCrack = numberOfHints;
+		// calculate minPossibleChars before crack password (maxNumberOfHints < verfügbare Hints)
+		int minPossibleChars = 2;
 
 		System.out.println(possiblePasswordChars);
 		System.out.println(passwordLength);
 		System.out.println(numberOfHints);
 
-		charCombinationsToSearch = new String[numberOfPossiblePasswordChars];
-		for (int i = 0; i < numberOfPossiblePasswordChars; i++) {
-			String charsToSearch = possiblePasswordChars.slice(0, i) + possiblePasswordChars.slice(i+1, numberOfPossiblePasswordChars);
-			charCombinationsToSearch[i] = charsToSearch;
+		for (Character charToBeLeftOut : possiblePasswordChars) {
+			ArrayList<Character> charsToSearch = new ArrayList<Character>();
+			for (Character charToBeAdded : possiblePasswordChars) {
+				if(charToBeLeftOut != charToBeAdded) {
+					charsToSearch.add(charToBeAdded);
+				}
+			}
+			charCombinationsToSearch.add(charsToSearch);
 		}
 
 		for (String[] line : lines) {
 			// create 1. hints with all hints, and ArrayList with crackedHint (empty at start) and List of line-IDs !!!
 			for (int hintNr = 4; hintNr < (numberOfHints + 4); hintNr++) {
 				if(!hints.containsKey(line[hintNr])) {
-					HintInfo crackedHintPlusIDs = new HintInfo(null, line[0]);
+					ArrayList<String> IDList = new ArrayList<String>();
+					IDList.add(line[0]);
+					HintInfo crackedHintPlusIDs = new HintInfo(Character.MIN_VALUE, IDList);
 					hints.put(line[hintNr], crackedHintPlusIDs);
 				} else {
 					HintInfo crackedHintPlusIDs = hints.get(line[hintNr]);
@@ -173,10 +190,7 @@ public class Master extends AbstractLoggingActor {
 			}
 
 			// create 2. hashmap with line-IDs, password-hash, possible chars
-			String[] passwordInfo = new String[3];
-			passwordInfo[0] = line[4];
-			passwordInfo[1] = null;
-			passwordInfo[2] = possiblePasswordChars;
+			PasswordInfo passwordInfo = new PasswordInfo(line[4], null, possiblePasswordChars);
 			passwords.put(line[0], passwordInfo);
 		}
 
@@ -208,7 +222,17 @@ public class Master extends AbstractLoggingActor {
 
 	protected void sendWork(ActorRef worker) {
 		// check whether work left
-		worker.tell(new Worker.SolveHintsMessage(charCombinationsToSearch.pop()), this.self());
+		char[] charsToSearch = getCharArrayFromArrayList(charCombinationsToSearch.remove(0));
+		worker.tell(new Worker.SolveHintsMessage(charsToSearch), this.self());
+	}
+
+	protected char[] getCharArrayFromArrayList(ArrayList<Character> arrayList) {
+		char[] charArray = new char[arrayList.size()];
+		Character[] characterArray = arrayList.toArray(new Character[arrayList.size()]);
+		for (int i = 0; i < arrayList.size(); i++) {
+			charArray[i] = characterArray[i].charValue();
+		}
+		return charArray;
 	}
 	
 	protected void terminate() {
@@ -241,12 +265,14 @@ public class Master extends AbstractLoggingActor {
 			char solvedHintChar = this.getSolvedHintChar(solvedHint[1]);
 			hint.setHintChar(solvedHintChar);
 			hints.put(solvedHint[0], hint);
-			String[] affectedPasswordLines = hint.getIDList();
+			ArrayList<String> affectedPasswordLines = hint.getIDList();
 			for(String line : affectedPasswordLines) {
-				String[] passwordInfo = passwords.get(line);
-				passwordInfo[1].remove(solvedHintChar);
-				if(passwordInfo[1].length() <= minPossibleChars && passwordInfo[1] == null) {
-					worker.tell(new Worker.CrackPasswordMessage(line, passwordInfo[0], passwordInfo[2]), this.self());
+				PasswordInfo passwordInfo = passwords.get(line);
+				ArrayList<Character> possibleChars = passwordInfo.getPossibleChars.remove(solvedHintChar);
+				passwordInfo.setPossibleChars(possibleChars);
+				if(possibleChars.size() <= minPossibleChars && passwordInfo.getCrackedPassword() == null) {
+					char[] possibleCharsArray = getCharArrayFromArrayList(possibleChars);
+					worker.tell(new Worker.CrackPasswordMessage(line, passwordInfo.getPasswordHash(), possibleCharsArray), this.self());
 				} else {
 					this.sendWork(worker);
 				}
@@ -264,8 +290,8 @@ public class Master extends AbstractLoggingActor {
 
 	protected void handle(PasswordCrackedMessage message) {
 		String lineID = message.getLineID();
-		String[] passwordInfo = passwords.get(lineID);
-		passwordInfo[1] = message.getCrackedPassword();
+		PasswordInfo passwordInfo = passwords.get(lineID);
+		passwordInfo.setCrackedPassword(message.getCrackedPassword());
 		passwords.put(lineID, passwordInfo);
 		// check whether work left
 	}
