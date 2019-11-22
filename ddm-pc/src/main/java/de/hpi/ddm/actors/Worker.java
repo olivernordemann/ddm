@@ -147,6 +147,7 @@ public class Worker extends AbstractLoggingActor {
 			String permutationHash = hash(permutation);
 			if (hints.containsKey(permutationHash)) {
 				String[] solvedHint = {permutationHash, permutation};
+				// System.out.println(permutation + ": " + permutationHash);
 				solvedHints.add(solvedHint);
 			}
 		}

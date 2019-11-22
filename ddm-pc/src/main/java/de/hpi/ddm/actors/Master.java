@@ -77,7 +77,7 @@ public class Master extends AbstractLoggingActor {
 
 	private long startTime;
 
-	private ArrayList<Character> possiblePasswordChars;
+	private ArrayList<Character> possiblePasswordChars = new ArrayList<Character>();
 	private int numberOfPossiblePasswordChars;
 	private int passwordLength;
 	private int numberOfHints;
@@ -144,34 +144,43 @@ public class Master extends AbstractLoggingActor {
 		///////////////////////////////////////////////////////////////////////////////////////////////////////
 
 		List<String[]> lines = message.getLines();
-		String[] firstLine = lines.get(0);
 
-		ArrayList<Character> possiblePasswordChars = new ArrayList<Character>();
-		for (char possibleChar : firstLine[2].toCharArray()) {
-			possiblePasswordChars.add(new Character(possibleChar));
+		if (lines.isEmpty()) {
+			// 1. for every possible password char:
+			//		send Worker message with (char, hints)
+			this.distributeWork();
+			System.out.println("lines is empty");
+			//this.collector.tell(new Collector.PrintMessage(), this.self());
+			//this.terminate();
+			return;
 		}
 
-		int numberOfPossiblePasswordChars = possiblePasswordChars.size();
-		// int numberOfPossibleHints = factorial(numberOfPossiblePasswordChars - 1);
-		int passwordLength = Integer.parseInt(firstLine[3]); // get password length
-		// int numberOfPossiblePasswords = numberOfPossiblePasswordChars ** passwordLength;
-		int numberOfHints = firstLine.length - 5; // get number of hints
+		String[] firstLine = lines.get(0);
 
-		// calculate minPossibleChars before crack password (maxNumberOfHints < verfügbare Hints)
-		int minPossibleChars = 2;
-
-		System.out.println(possiblePasswordChars);
-		System.out.println(passwordLength);
-		System.out.println(numberOfHints);
-
-		for (Character charToBeLeftOut : possiblePasswordChars) {
-			ArrayList<Character> charsToSearch = new ArrayList<Character>();
-			for (Character charToBeAdded : possiblePasswordChars) {
-				if(charToBeLeftOut != charToBeAdded) {
-					charsToSearch.add(charToBeAdded);
-				}
+		if(possiblePasswordChars.isEmpty()) {
+			for (char possibleChar : firstLine[2].toCharArray()) {
+				possiblePasswordChars.add(new Character(possibleChar));
 			}
-			charCombinationsToSearch.add(charsToSearch);
+
+			numberOfPossiblePasswordChars = possiblePasswordChars.size();
+			// int numberOfPossibleHints = factorial(numberOfPossiblePasswordChars - 1);
+			passwordLength = Integer.parseInt(firstLine[3]); // get password length
+			// int numberOfPossiblePasswords = numberOfPossiblePasswordChars ** passwordLength;
+			numberOfHints = firstLine.length - 5; // get number of hints
+			// calculate minPossibleChars before crack password (maxNumberOfHints < verfügbare Hints)
+			minPossibleChars = 2;
+
+			for (Character charToBeLeftOut : possiblePasswordChars) {
+				ArrayList<Character> charsToSearch = new ArrayList<Character>();
+				for (Character charToBeAdded : possiblePasswordChars) {
+					if(charToBeLeftOut != charToBeAdded) {
+						charsToSearch.add(charToBeAdded);
+					}
+				}
+				charCombinationsToSearch.add(charsToSearch);
+			}
+
+			System.out.println(possiblePasswordChars);
 		}
 
 		for (String[] line : lines) {
@@ -190,24 +199,9 @@ public class Master extends AbstractLoggingActor {
 			}
 
 			// create 2. hashmap with line-IDs, password-hash, possible chars
-			PasswordInfo passwordInfo = new PasswordInfo(line[4], null, possiblePasswordChars);
+			PasswordInfo passwordInfo = new PasswordInfo(line[4], null, new ArrayList<>(possiblePasswordChars));
 			passwords.put(line[0], passwordInfo);
 		}
-
-
-
-		if (message.getLines().isEmpty()) {
-			// 1. for every possible password char:
-			//		send Worker message with (char, hints)
-			this.distributeWork();
-
-			this.collector.tell(new Collector.PrintMessage(), this.self());
-			this.terminate();
-			return;
-		}
-		
-		for (String[] line : message.getLines())
-			System.out.println(Arrays.toString(line));
 		
 		this.collector.tell(new Collector.CollectMessage("Processed batch of size " + message.getLines().size()), this.self());
 		this.reader.tell(new Reader.ReadMessage(), this.self());
@@ -222,6 +216,7 @@ public class Master extends AbstractLoggingActor {
 
 	protected void sendWork(ActorRef worker) {
 		// check whether work left
+		System.out.println(charCombinationsToSearch);
 		char[] charsToSearch = getCharArrayFromArrayList(charCombinationsToSearch.remove(0));
 		worker.tell(new Worker.SolveHintsMessage(charsToSearch), this.self());
 	}
@@ -259,35 +254,45 @@ public class Master extends AbstractLoggingActor {
 	protected void handle(HintsSolvedMessage message) {
 		ActorRef worker = this.getSender();
 		ArrayList<String[]> solvedHints = message.getSolvedHints();
+
+		System.out.println("Solved hints: " + solvedHints.size());
 		
 		for(String[] solvedHint : solvedHints) {
 			HintInfo hint = hints.get(solvedHint[0]);
-			char solvedHintChar = this.getSolvedHintChar(solvedHint[1]);
+			System.out.println("Solved hint: " + solvedHint[1]);
+			Character solvedHintChar = this.getSolvedHintChar(solvedHint[1]); //will be the same for all because its just permutations, could be better (only send line and letter?)
 			hint.setHintChar(solvedHintChar);
+			System.out.println("Solved char: " + solvedHintChar);
 			hints.put(solvedHint[0], hint);
 			ArrayList<String> affectedPasswordLines = hint.getIDList();
 			for(String line : affectedPasswordLines) {
+				System.out.println("line: " + line);
 				PasswordInfo passwordInfo = passwords.get(line);
-				passwordInfo.getPossibleChars().remove(solvedHintChar);
+				if(passwordInfo.getPossibleChars().contains(solvedHintChar)) {
+					passwordInfo.getPossibleChars().remove(solvedHintChar);
+				}
+				System.out.println("remaining chars: " + passwordInfo.getPossibleChars());
 				ArrayList<Character> possibleChars = passwordInfo.getPossibleChars();
 				passwordInfo.setPossibleChars(possibleChars);
 				if(possibleChars.size() <= minPossibleChars && passwordInfo.getCrackedPassword() == null) {
+					System.out.println("Crack pw");
 					char[] possibleCharsArray = getCharArrayFromArrayList(possibleChars);
 					worker.tell(new Worker.CrackPasswordMessage(line, passwordInfo.getPasswordHash(), possibleCharsArray), this.self());
 				} else {
-					this.sendWork(worker);
+					// System.out.println("Solve more");
+					// this.sendWork(worker);
 				}
 			}
 		}
 	}
 
-	protected char getSolvedHintChar(String solvedHint) {
+	protected Character getSolvedHintChar(String solvedHint) {
 		for(char possibleChar : possiblePasswordChars) {
 			if (!solvedHint.contains(Character.toString(possibleChar))) {
-				return possibleChar;
+				return (Character) possibleChar;
 			}
 		}
-		return Character.MIN_VALUE;
+		return (Character) Character.MIN_VALUE;
 	}
 
 	protected void handle(PasswordCrackedMessage message) {
