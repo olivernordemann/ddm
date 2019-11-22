@@ -48,6 +48,12 @@ public class Worker extends AbstractLoggingActor {
 		private static final long serialVersionUID = 4443040942748609598L;
 		private HashMap<String, Master.HintInfo> hints;
 	}
+
+	@Data @NoArgsConstructor @AllArgsConstructor
+	public static class passwordLengthMessage implements Serializable {
+		private static final long serialVersionUID = 4443040942748609598L;
+		private int passwordLength;
+	}
 	
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class SolveHintsMessage implements Serializable {
@@ -63,6 +69,7 @@ public class Worker extends AbstractLoggingActor {
 		private char[] possibleChars;
 	}
 
+
 	/////////////////
 	// Actor State //
 	/////////////////
@@ -71,7 +78,8 @@ public class Worker extends AbstractLoggingActor {
 	private final Cluster cluster;
 
 	private HashMap<String, Master.HintInfo> hints = new HashMap<String, Master.HintInfo>();
-	
+	private int passwordLength;
+
 	/////////////////////
 	// Actor Lifecycle //
 	/////////////////////
@@ -99,6 +107,7 @@ public class Worker extends AbstractLoggingActor {
 				.match(MemberUp.class, this::handle)
 				.match(MemberRemoved.class, this::handle)
 				.match(HintsMessage.class, this::handle)
+				.match(passwordLengthMessage.class, this::handle)
 				.match(SolveHintsMessage.class, this::handle)
 				.match(CrackPasswordMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
@@ -135,6 +144,10 @@ public class Worker extends AbstractLoggingActor {
 		hints = message.getHints();
 	}
 
+	private void handle(passwordLengthMessage message) {
+		this.passwordLength = message.getPasswordLength();
+	}
+
 	private void handle(SolveHintsMessage message) {
 		char[] charsToSearch = message.getCharsToSearch();
 
@@ -159,12 +172,28 @@ public class Worker extends AbstractLoggingActor {
 		String lineID = message.getLineID();
 		String passwordHash = message.getPasswordHash();
 		char[] possibleChars = message.getPossibleChars();
+		System.out.println(this.self() + "Crack Password Nr: " + lineID + " password hash " + passwordHash + " possible chars " + possibleChars + " password length " + passwordLength);
+
+		char chars[] = new char[passwordLength];
+		for (char possibleChar : possibleChars) {
+			int i = 0;
+			chars[i] = possibleChar;
+			i++;
+		}
+
+		for (int i = possibleChars.length; i <= passwordLength; i++) {
+			chars[i-1] = possibleChars[0];
+		}
 
 		List<String> charPermutations = new ArrayList<String>();
-		this.heapPermutation(possibleChars, possibleChars.length, possibleChars.length, charPermutations);
+		//this.heapPermutation(possibleChars, possibleChars.length, possibleChars.length, charPermutations);
+		this.heapPermutation(chars, chars.length, chars.length, charPermutations);
 
 		for (String permutation : charPermutations) {
+			System.out.println("Permutation: " + permutation);
 			String permutationHash = hash(permutation);
+			System.out.println("Permutation Hash: " + permutationHash);
+			System.out.println("Password Hash: " + passwordHash);
 			if (passwordHash == permutationHash) {
 				this.getSender().tell(new Master.PasswordCrackedMessage(lineID, permutation), this.self());
 			}
