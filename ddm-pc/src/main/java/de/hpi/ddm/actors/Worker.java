@@ -79,6 +79,7 @@ public class Worker extends AbstractLoggingActor {
 
 	private HashMap<String, Master.HintInfo> hints = new HashMap<String, Master.HintInfo>();
 	private int passwordLength;
+	private String password = "";
 
 	/////////////////////
 	// Actor Lifecycle //
@@ -169,36 +170,51 @@ public class Worker extends AbstractLoggingActor {
 	}
 
 	private void handle(CrackPasswordMessage message) {
+		this.password = "";
 		String lineID = message.getLineID();
 		String passwordHash = message.getPasswordHash();
 		char[] possibleChars = message.getPossibleChars();
-		System.out.println(this.self() + "Crack Password Nr: " + lineID + " password hash " + passwordHash + " possible chars " + possibleChars + " password length " + passwordLength);
+		System.out.println(this.self() + "Crack Password Nr: " + lineID + " password hash " + passwordHash + " first 2 possible chars " + possibleChars[0] + possibleChars[1] + " password length " + passwordLength);
 
+		testPossiblePasswords(possibleChars, passwordLength, "", passwordHash);
+
+		System.out.println("Password Hash: " + passwordHash);
+		System.out.println("Password Hash: " + this.password);
+		this.getSender().tell(new Master.PasswordCrackedMessage(lineID, this.password), this.self());
+		return;
+		/*
 		char chars[] = new char[passwordLength];
 		for (char possibleChar : possibleChars) {
 			int i = 0;
 			chars[i] = possibleChar;
 			i++;
 		}
-
 		for (int i = possibleChars.length; i <= passwordLength; i++) {
 			chars[i-1] = possibleChars[0];
 		}
 
 		List<String> charPermutations = new ArrayList<String>();
 		//this.heapPermutation(possibleChars, possibleChars.length, possibleChars.length, charPermutations);
-		this.heapPermutation(chars, chars.length, chars.length, charPermutations);
+		//this.heapPermutation(chars, passwordLength, 1, charPermutations);
+		//this.heapPermutation(possibleChars, passwordLength, possibleChars.length, charPermutations);
 
 		for (String permutation : charPermutations) {
 			System.out.println("Permutation: " + permutation);
 			String permutationHash = hash(permutation);
-			System.out.println("Permutation Hash: " + permutationHash);
-			System.out.println("Password Hash: " + passwordHash);
+
 			if (passwordHash == permutationHash) {
+				System.out.println("Permutation Hash: " + permutationHash);
+				System.out.println("Password Hash: " + passwordHash);
 				this.getSender().tell(new Master.PasswordCrackedMessage(lineID, permutation), this.self());
+				return;
 			}
-		}
-	}
+
+
+		}*/
+
+}
+
+
 	
 	private String hash(String line) {
 		try {
@@ -242,4 +258,25 @@ public class Worker extends AbstractLoggingActor {
 			}
 		}
 	}
+
+	private void testPossiblePasswords(char[] possibleChars, int length, String prefix, String passwordHash)  {
+		if (!this.password.equals("")) {
+			return;
+		}
+
+		if (length == 0) {
+			if (hash(prefix).equals(passwordHash)) {
+				this.password = prefix;
+			}
+			return;
+		}
+		int countChars = possibleChars.length;
+
+		for (int i = 0; i < countChars; i++) {
+			String newPrefix = (prefix + possibleChars[i]);
+			testPossiblePasswords(possibleChars, length - 1, newPrefix, passwordHash);
+		}
+	}
+
+
 }
