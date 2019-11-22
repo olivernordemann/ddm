@@ -1,11 +1,7 @@
 package de.hpi.ddm.actors;
 
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.NavigableSet;
+import java.util.*;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
@@ -82,6 +78,7 @@ public class Master extends AbstractLoggingActor {
 	private int passwordLength;
 	private int numberOfHints;
 	private int minPossibleChars;
+	private Deque<Worker.SolveHintsMessage> hintsStack = new ArrayDeque<Worker.SolveHintsMessage>();
 
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class HintInfo {
@@ -208,6 +205,14 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	protected void distributeWork() {
+		// push SolveHintMessages with char combinations to hintsStack
+		System.out.println(charCombinationsToSearch);
+		while(!charCombinationsToSearch.isEmpty()) {
+			char[] charsToSearch = getCharArrayFromArrayList(charCombinationsToSearch.remove(0));
+			hintsStack.push(new Worker.SolveHintsMessage(charsToSearch));
+		}
+
+		// start the workers, send one message to every worker
 		for (ActorRef worker : workers) {
 			worker.tell(new Worker.HintsMessage(hints), this.self());
 			this.sendWork(worker);
@@ -216,9 +221,11 @@ public class Master extends AbstractLoggingActor {
 
 	protected void sendWork(ActorRef worker) {
 		// check whether work left
-		System.out.println(charCombinationsToSearch);
-		char[] charsToSearch = getCharArrayFromArrayList(charCombinationsToSearch.remove(0));
-		worker.tell(new Worker.SolveHintsMessage(charsToSearch), this.self());
+		if(!hintsStack.isEmpty()) {
+			worker.tell(hintsStack.pop(), this.self());
+		} else {
+			System.out.println("no hints in Stack");
+		}
 	}
 
 	protected char[] getCharArrayFromArrayList(ArrayList<Character> arrayList) {
