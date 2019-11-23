@@ -71,5 +71,7 @@ public class Collector extends AbstractLoggingActor {
 	
 	protected void handle(PrintMessage message) {
 		this.results.forEach(result -> this.log().info("{}", result));
+		// TODO: send finish Message to Master
+		this.getSender().tell(new Master.WorkFinishedMessage(), this.self());
 	}
 }

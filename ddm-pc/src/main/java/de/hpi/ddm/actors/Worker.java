@@ -179,8 +179,8 @@ public class Worker extends AbstractLoggingActor {
 		testPossiblePasswords(possibleChars, passwordLength, "", passwordHash);
 
 		System.out.println("Password Hash: " + passwordHash);
-		System.out.println("Password Hash: " + this.password);
-		this.getSender().tell(new Master.PasswordCrackedMessage(lineID, this.password), this.self());
+		System.out.println("Password: " + this.password);
+		this.getSender().tell(new Master.PasswordCrackedMessage(message.getLineID(), this.password), this.self());
 		return;
 		/*
 		char chars[] = new char[passwordLength];
