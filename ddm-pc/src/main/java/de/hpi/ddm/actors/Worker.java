@@ -259,22 +259,22 @@ public class Worker extends AbstractLoggingActor {
 		}
 	}
 
-	private void testPossiblePasswords(char[] possibleChars, int length, String prefix, String passwordHash)  {
+	private void testPossiblePasswords(char[] possibleChars, int length, String password, String passwordHash)  {
 		if (!this.password.equals("")) {
 			return;
 		}
 
 		if (length == 0) {
-			if (hash(prefix).equals(passwordHash)) {
-				this.password = prefix;
+			if (hash(password).equals(passwordHash)) {
+				this.password = password;
 			}
 			return;
 		}
 		int countChars = possibleChars.length;
 
 		for (int i = 0; i < countChars; i++) {
-			String newPrefix = (prefix + possibleChars[i]);
-			testPossiblePasswords(possibleChars, length - 1, newPrefix, passwordHash);
+			String nextPassword = (password + possibleChars[i]);
+			testPossiblePasswords(possibleChars, length - 1, nextPassword, passwordHash);
 		}
 	}
 
