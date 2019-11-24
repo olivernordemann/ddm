@@ -13,6 +13,9 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import static java.lang.Thread.sleep;
+
+
 public class Master extends AbstractLoggingActor {
 
 	////////////////////////
@@ -64,6 +67,11 @@ public class Master extends AbstractLoggingActor {
 		private static final long serialVersionUID = 7763040942748609100L;
 		private Integer lineID;
 		private String crackedPassword;
+	}
+
+	@Data
+	public static class PasswordsPrintedMessage implements Serializable {
+		private static final long serialVersionUID = 7763040942748609111L;
 	}
 	
 	/////////////////
@@ -132,6 +140,7 @@ public class Master extends AbstractLoggingActor {
 				.match(RegistrationMessage.class, this::handle)
 				.match(HintsSolvedMessage.class, this::handle)
 				.match(PasswordCrackedMessage.class, this::handle)
+				.match(PasswordsPrintedMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
 	}
@@ -229,20 +238,20 @@ public class Master extends AbstractLoggingActor {
 		return charArray;
 	}
 	
-	protected void terminate() {
-
-		this.reader.tell(PoisonPill.getInstance(), ActorRef.noSender());
-		this.collector.tell(PoisonPill.getInstance(), ActorRef.noSender());
-
-		for (ActorRef worker : this.workers) {
-			this.context().unwatch(worker);
-			worker.tell(PoisonPill.getInstance(), ActorRef.noSender());
-		}
+	protected void terminate()  {
 
 		long executionTime = System.currentTimeMillis() - this.startTime;
 		this.log().info("Algorithm finished in {} ms", executionTime);
 
-		this.self().tell(PoisonPill.getInstance(), ActorRef.noSender());
+		for (ActorRef worker : this.workers) {
+			this.context().unwatch(worker);
+			worker.tell(PoisonPill.getInstance(), this.getSelf());
+		}
+		this.reader.tell(PoisonPill.getInstance(), this.getSelf());
+		this.collector.tell(PoisonPill.getInstance(), this.getSelf());
+
+		try{ Thread.sleep(500); } catch(InterruptedException e){}
+		this.getSelf().tell(PoisonPill.getInstance(), this.getSelf());
 	}
 
 	protected void handle(RegistrationMessage message) {
@@ -310,14 +319,17 @@ public class Master extends AbstractLoggingActor {
 			assign(worker);
 		}
 	}
+	protected void handle(PasswordsPrintedMessage message) {
+		terminate();
+	}
 
 	protected void endWork() {
+
 		for (Integer lineID = 0; lineID < passwords.size(); lineID++ ) {
 			PasswordInfo passwordInfo = passwords.get(lineID);
 			this.collector.tell(new Collector.CollectMessage(passwordInfo.getCrackedPassword()), this.self());
 		}
 		this.collector.tell(new Collector.PrintMessage(), this.self());
-		terminate();
 	}
 	
 	protected void handle(Terminated message) {

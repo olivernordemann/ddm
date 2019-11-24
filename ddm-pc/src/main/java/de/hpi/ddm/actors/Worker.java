@@ -172,9 +172,9 @@ public class Worker extends AbstractLoggingActor {
 		Integer lineID = message.getLineID();
 		String passwordHash = message.getPasswordHash();
 		char[] possibleChars = message.getPossibleChars();		
-		List<String> possiblePasswords = new ArrayList<String>();
+		//List<String> possiblePasswords = new ArrayList<String>();
 		password = "";
-		this.findPassword(possibleChars, passwordLength, "", passwordHash);
+		this.findPassword(possibleChars, passwordLength, password, passwordHash);
 		this.getSender().tell(new Master.PasswordCrackedMessage(lineID, password), this.self());
 		return;
 	}

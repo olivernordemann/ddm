@@ -5,6 +5,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import akka.actor.AbstractLoggingActor;
+import akka.actor.ActorRef;
+import akka.actor.PoisonPill;
 import akka.actor.Props;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -71,5 +73,6 @@ public class Collector extends AbstractLoggingActor {
 	
 	protected void handle(PrintMessage message) {
 		this.results.forEach(result -> this.log().info("{}", result));
+		this.sender().tell(new Master.PasswordsPrintedMessage(), this.self());
 	}
 }
