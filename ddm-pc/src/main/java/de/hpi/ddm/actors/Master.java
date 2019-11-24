@@ -2,7 +2,6 @@ package de.hpi.ddm.actors;
 
 import java.io.Serializable;
 import java.util.*;
-import java.lang.Math;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
