@@ -2,6 +2,7 @@ package de.hpi.ddm.actors;
 
 import java.io.Serializable;
 import java.util.*;
+import java.lang.Math;
 
 import akka.actor.AbstractLoggingActor;
 import akka.actor.ActorRef;
@@ -61,13 +62,8 @@ public class Master extends AbstractLoggingActor {
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class PasswordCrackedMessage implements Serializable {
 		private static final long serialVersionUID = 7763040942748609100L;
-		private String lineID;
+		private Integer lineID;
 		private String crackedPassword;
-	}
-
-	@Data
-	public static class WorkFinishedMessage implements Serializable {
-		private static final long serialVersionUID = 3303081601659723111L;
 	}
 	
 	/////////////////
@@ -84,7 +80,7 @@ public class Master extends AbstractLoggingActor {
 	private long startTime;
 
 	private Worker.HintsMessage hintsMessage;
-	private Worker.passwordLengthMessage passwordLengthMessage;
+	private Worker.PasswordLengthMessage passwordLengthMessage;
 	private ArrayList<Character> possiblePasswordChars = new ArrayList<Character>();
 	private int numberOfPossiblePasswordChars;
 	private int passwordLength;
@@ -93,15 +89,16 @@ public class Master extends AbstractLoggingActor {
 	private int numberOfPasswords;
 
 	private HashMap<String, HintInfo> hints = new HashMap<String, HintInfo>();
-	private HashMap<String, PasswordInfo> passwords = new HashMap<String, PasswordInfo>();
+	private ArrayList<PasswordInfo> passwords = new ArrayList<PasswordInfo>();
 	private HashMap<String, Boolean> searchedChars = new HashMap<String, Boolean>();
 	private ArrayList<ArrayList<Character>> charCombinationsToSearch = new ArrayList<ArrayList<Character>>();
-	private Set<String> crackedLineIDs = new HashSet<>();
+	private Set<Integer> crackedLineIDs = new HashSet<>();
+	private HashMap<ActorRef, Object> workingOn = new HashMap<ActorRef, Object>();
 
 	@Data @NoArgsConstructor @AllArgsConstructor
 	public static class HintInfo {
 		private char hintChar;
-		private ArrayList<String> IDList = new ArrayList<String>();
+		private ArrayList<Integer> IDList = new ArrayList<Integer>();
 	}
 
 	@Data @NoArgsConstructor @AllArgsConstructor
@@ -135,13 +132,8 @@ public class Master extends AbstractLoggingActor {
 				.match(RegistrationMessage.class, this::handle)
 				.match(HintsSolvedMessage.class, this::handle)
 				.match(PasswordCrackedMessage.class, this::handle)
-				.match(WorkFinishedMessage.class, this::handle)
 				.matchAny(object -> this.log().info("Received unknown message: \"{}\"", object.toString()))
 				.build();
-	}
-
-	private void handle(WorkFinishedMessage workFinishedMessage) {
-		terminate();
 	}
 
 	protected void handle(StartMessage message) {
@@ -162,12 +154,11 @@ public class Master extends AbstractLoggingActor {
 
 		if (lines.isEmpty()) {
 			this.numberOfPasswords = passwords.size();
-			System.out.println("Lines are empty - no more input - Start work - Number of Passwords: "+ this.numberOfPasswords);
 			this.distributeWork();
 			return;
 		}
 
-		if(possiblePasswordChars.isEmpty()) {
+		if(possiblePasswordChars.isEmpty()) { //initialize state
 			String[] firstLine = lines.get(0);
 
 			for (char possibleChar : firstLine[2].toCharArray()) {
@@ -177,7 +168,6 @@ public class Master extends AbstractLoggingActor {
 			passwordLength = Integer.parseInt(firstLine[3]);
 			numberOfHints = firstLine.length - 5;
 			minPossibleChars = passwordLength - numberOfHints + 1; // first solve ALL hints, then start cracking
-			System.out.println("PossibleChars: " + minPossibleChars);
 
 			for (Character charToBeLeftOut : possiblePasswordChars) {
 				ArrayList<Character> charsToSearch = new ArrayList<Character>();
@@ -188,46 +178,45 @@ public class Master extends AbstractLoggingActor {
 				}
 				charCombinationsToSearch.add(charsToSearch);
 			}
-			System.out.println(possiblePasswordChars);
 		}
 
-		for (String[] line : lines) {
-			// create 1. Hashmap hints with all hints, and ArrayList with crackedHint (empty at start) and List of line-IDs !!!
+		int numberOfExistingPasswords = passwords.size();
+		int numberofLinesInBatch = lines.size();
+
+		for (int lineSequenceNumber = 0; lineSequenceNumber < numberofLinesInBatch; lineSequenceNumber++) {
+			Integer lineID = numberOfExistingPasswords + lineSequenceNumber;
+			String[] line = lines.get(lineSequenceNumber);
 			for (int hintNr = 5; hintNr < (numberOfHints + 5); hintNr++) {
 				if(!hints.containsKey(line[hintNr])) {
-					ArrayList<String> IDList = new ArrayList<String>();
-					IDList.add(line[0]);
+					ArrayList<Integer> IDList = new ArrayList<Integer>();
+					IDList.add(lineID);
 					HintInfo crackedHintPlusIDs = new HintInfo(Character.MIN_VALUE, IDList);
 					hints.put(line[hintNr], crackedHintPlusIDs);
 				} else {
 					HintInfo crackedHintPlusIDs = hints.get(line[hintNr]);
-					crackedHintPlusIDs.getIDList().add(line[0]);
+					crackedHintPlusIDs.getIDList().add(lineID);
 					hints.put(line[hintNr], crackedHintPlusIDs);
 				}
 			}
-			// create 2. hashmap with line-IDs, password-hash, possible chars
 			PasswordInfo passwordInfo = new PasswordInfo(line[4], null, new ArrayList<>(possiblePasswordChars));
-			passwords.put(line[0], passwordInfo);
+			passwords.add(passwordInfo);
 		}
-		
-		this.collector.tell(new Collector.CollectMessage("Processed batch of size " + message.getLines().size()), this.self());
 		this.reader.tell(new Reader.ReadMessage(), this.self());
 	}
 
 	protected void distributeWork() {
 		// start the workers which are already registered, send one message to every worker
-		this.hintsMessage = new Worker.HintsMessage(hints);
-		this.passwordLengthMessage = new Worker.passwordLengthMessage(passwordLength);
-
+		hintsMessage = new Worker.HintsMessage(hints);
+		passwordLengthMessage = new Worker.PasswordLengthMessage(passwordLength);
 		// verteile Infos zum Lösen der Hints und Passwörter auf alle bereits registrierten worker
 		for (ActorRef worker : workers) {
-			worker.tell(this.hintsMessage, this.self());
-			worker.tell(this.passwordLengthMessage, this.self());
+			worker.tell(hintsMessage, this.self());
+			worker.tell(passwordLengthMessage, this.self());
 		}
 		// push SolveHintMessages with char combinations on workStack
 		while(!charCombinationsToSearch.isEmpty()) {
 			char[] charsToSearch = getCharArrayFromArrayList(charCombinationsToSearch.remove(0));
-			this.assign(new Worker.SolveHintsMessage(charsToSearch));
+			assign(new Worker.SolveHintsMessage(charsToSearch));
 		}
 	}
 
@@ -261,45 +250,40 @@ public class Master extends AbstractLoggingActor {
 		this.workers.add(this.sender());
 
 		// if information messages for solving work are ready, then send them to worker
-		if (this.hintsMessage != null) { this.sender().tell(this.hintsMessage, this.self()); }
-		if (this.passwordLengthMessage != null) { this.sender().tell(this.passwordLengthMessage, this.self()); }
+		if (hintsMessage != null) { this.sender().tell(hintsMessage, this.self()); }
+		if (passwordLengthMessage != null) { this.sender().tell(passwordLengthMessage, this.self()); }
 
-		this.assign(this.sender());
+		assign(this.sender());
 	}
 
 	protected void handle(HintsSolvedMessage message) {
-		this.assign(this.sender());
 		ActorRef worker = this.getSender();
 		ArrayList<String[]> solvedHints = message.getSolvedHints();
-		System.out.println("Solved hints: " + solvedHints.size());
+
+		Character solvedHintChar = Character.MIN_VALUE;
+		if(solvedHints.size() > 0) {
+			solvedHintChar = this.getSolvedHintChar(solvedHints.get(0)[1]); // worker solved immer genau einen buchstaben
+		}
 
 		for(String[] solvedHint : solvedHints) {
 			HintInfo hint = hints.get(solvedHint[0]); // sucht in hint hashmap den Hash des gelösten Hinweises
-			System.out.println("Solved hint: " + solvedHint[1]);
-			Character solvedHintChar = this.getSolvedHintChar(solvedHint[1]); //will be the same for all because its just permutations, could be better (only send line and letter?)
 			hint.setHintChar(solvedHintChar);
-			System.out.println("Solved char: " + solvedHintChar);
 			hints.put(solvedHint[0], hint);
-			ArrayList<String> affectedPasswordLines = hint.getIDList();
-			for(String line : affectedPasswordLines) {
-				System.out.println("line: " + line);
-				PasswordInfo passwordInfo = passwords.get(line);
-				if(passwordInfo.getPossibleChars().contains(solvedHintChar)) {
-					passwordInfo.getPossibleChars().remove(solvedHintChar);
-				}
-				System.out.println("remaining chars: " + passwordInfo.getPossibleChars());
+			ArrayList<Integer> affectedPasswordLines = hint.getIDList();
+			for(Integer lineID : affectedPasswordLines) {
+				PasswordInfo passwordInfo = passwords.get(lineID);
 				ArrayList<Character> possibleChars = passwordInfo.getPossibleChars();
-				passwordInfo.setPossibleChars(possibleChars);
-				System.out.println("Count possible Chars: " + possibleChars.size());
-
-				if(possibleChars.size() <= minPossibleChars && passwordInfo.getCrackedPassword() == null) {
-					System.out.println("push CrackPasswordMessage to stack");
-					char[] possibleCharsArray = getCharArrayFromArrayList(possibleChars);
-					workStack.push(new Worker.CrackPasswordMessage(line, passwordInfo.getPasswordHash(), possibleCharsArray));
+				if(possibleChars.contains(solvedHintChar)) {
+					possibleChars.remove(solvedHintChar);
+					passwordInfo.setPossibleChars(possibleChars);
+				}
+				if(possibleChars.size() <= minPossibleChars) {
+					char[] possibleCharsArray = getCharArrayFromArrayList(passwordInfo.getPossibleChars());
+					workStack.push(new Worker.CrackPasswordMessage(lineID, passwordInfo.getPasswordHash(), possibleCharsArray));
 				}
 			}
 		}
-		System.out.println("assign worker new work (if there is work)");
+
 		assign(worker);
 	}
 
@@ -313,61 +297,55 @@ public class Master extends AbstractLoggingActor {
 	}
 
 	protected void handle(PasswordCrackedMessage message) {
-
 		ActorRef worker = this.getSender();
-
-		String lineID = message.getLineID();
+		Integer lineID = message.getLineID();
 		PasswordInfo passwordInfo = passwords.get(lineID);
 		passwordInfo.setCrackedPassword(message.getCrackedPassword());
-		passwords.put(lineID, passwordInfo);
-
-		System.out.println("Password cracked: "+ message.getLineID() + " " + message.getCrackedPassword());
-		System.out.println(message.getLineID());
-
-		this.crackedLineIDs.add(message.getLineID());
-		System.out.println(this.crackedLineIDs.size());
-		this.assign(worker);
+		passwords.set(lineID, passwordInfo);
+		this.crackedLineIDs.add(lineID);
+		
 		if(this.numberOfPasswords == this.crackedLineIDs.size()) {
-			for (PasswordInfo pInfo : passwords.values()) {
-				System.out.println("Send passwords to Collector: "+ pInfo.getCrackedPassword());
-				this.collector.tell(new Collector.CollectMessage(pInfo.getCrackedPassword()), this.self());
-			}
-			this.collector.tell(new Collector.PrintMessage(), this.self());
+			endWork();
+		} else {
+			assign(worker);
 		}
+	}
 
+	protected void endWork() {
+		for (Integer lineID = 0; lineID < passwords.size(); lineID++ ) {
+			PasswordInfo passwordInfo = passwords.get(lineID);
+			this.collector.tell(new Collector.CollectMessage(passwordInfo.getCrackedPassword()), this.self());
+		}
+		this.collector.tell(new Collector.PrintMessage(), this.self());
+		terminate();
 	}
 	
 	protected void handle(Terminated message) {
 		this.context().unwatch(message.getActor());
-		this.workers.remove(message.getActor());
-		this.idleWorkers.remove(message.getActor());
-//		this.log().info("Unregistered {}", message.getActor());
-
-		// TODO: put characters into search again
+		workers.remove(message.getActor());
+		idleWorkers.remove(message.getActor());
+		assign(workingOn.get(message.getActor()));
 	}
 
-
 	private void assign(Object work) {
-		ActorRef worker = this.idleWorkers.poll();
+		ActorRef worker = idleWorkers.poll();
 
 		if (worker == null) {
-			this.workStack.push(work);
+			workStack.push(work);
 			return;
 		}
-		//TODO: BusyWorker füllen und leeren
-		//this.busyWorkers.put(worker, work);
 		worker.tell(work, this.self());
+		workingOn.put(worker, work);
 	}
 
 	private void assign(ActorRef worker) {
-		Object work = this.workStack.pollLast();
+		Object work = workStack.poll();
 
 		if (work == null) {
-			this.idleWorkers.add(worker);
+			idleWorkers.add(worker);
 			return;
 		}
-		//TODO: BusyWorker füllen und leeren
-		//this.busyWorkers.put(worker, work);
 		worker.tell(work, this.self());
+		workingOn.put(worker, work);
 	}
 }
