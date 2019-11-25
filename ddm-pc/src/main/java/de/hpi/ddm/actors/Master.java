@@ -176,6 +176,9 @@ public class Master extends AbstractLoggingActor {
 			passwordLength = Integer.parseInt(firstLine[3]);
 			numberOfHints = firstLine.length - 5;
 			minPossibleChars = passwordLength - numberOfHints + 1; // first solve ALL hints, then start cracking
+			if(minPossibleChars<2) {
+				minPossibleChars = 2;
+			}
 
 			for (Character charToBeLeftOut : possiblePasswordChars) {
 				ArrayList<Character> charsToSearch = new ArrayList<Character>();
