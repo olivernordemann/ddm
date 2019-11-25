@@ -113,6 +113,7 @@ public class Master extends AbstractLoggingActor {
 		private String passwordHash;
 		private String crackedPassword;
 		private ArrayList<Character> possibleChars = new ArrayList<Character>();
+		private int nrHintsSolved;
 	}
 
 
@@ -209,7 +210,7 @@ public class Master extends AbstractLoggingActor {
 					hints.put(line[hintNr], crackedHintPlusIDs);
 				}
 			}
-			PasswordInfo passwordInfo = new PasswordInfo(line[4], null, new ArrayList<>(possiblePasswordChars));
+			PasswordInfo passwordInfo = new PasswordInfo(line[4], null, new ArrayList<>(possiblePasswordChars), 0);
 			passwords.add(passwordInfo);
 		}
 		this.reader.tell(new Reader.ReadMessage(), this.self());
@@ -283,12 +284,13 @@ public class Master extends AbstractLoggingActor {
 			ArrayList<Integer> affectedPasswordLines = hint.getIDList();
 			for(Integer lineID : affectedPasswordLines) {
 				PasswordInfo passwordInfo = passwords.get(lineID);
+				passwordInfo.setNrHintsSolved(passwordInfo.getNrHintsSolved()+1);
 				ArrayList<Character> possibleChars = passwordInfo.getPossibleChars();
 				if(possibleChars.contains(solvedHintChar)) {
 					possibleChars.remove(solvedHintChar);
 					passwordInfo.setPossibleChars(possibleChars);
 				}
-				if(possibleChars.size() <= minPossibleChars) {
+				if(possibleChars.size() <= minPossibleChars || passwordInfo.getNrHintsSolved() >= this.numberOfHints) {
 					char[] possibleCharsArray = getCharArrayFromArrayList(passwordInfo.getPossibleChars());
 					workStack.push(new Worker.CrackPasswordMessage(lineID, passwordInfo.getPasswordHash(), possibleCharsArray));
 				}
