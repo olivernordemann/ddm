@@ -42,13 +42,13 @@ object Sindy {
 //    groupedInclusionSets.show()
 
     val intersectedInclusionSet = groupedInclusionSets.map(row => (row.getAs[String]("columnName"), row.getAs[Seq[Seq[String]]]("collect_set(inclusionSet)").reduce(_.intersect(_)))).toDF("columnName", "inclusionSet")
-    intersectedInclusionSet.printSchema()
-    intersectedInclusionSet.show()
+//    intersectedInclusionSet.printSchema()
+//    intersectedInclusionSet.show()
 
-//    val explodedInclusions = intersectedInclusionSet.withColumn("includedIn", explode($"inclusionSet")).select("columnName", "includedIn")
-//    explodedInclusions.printSchema()
-//    explodedInclusions.show()
+    val filteredInclusionSet = intersectedInclusionSet.filter(row => row.getAs[Seq[String]]("inclusionSet").nonEmpty).toDF("columnName", "inclusionSet").orderBy("columnName")
+//    filteredInclusionSet.printSchema()
+//    filteredInclusionSet.show()
 
-
+    filteredInclusionSet.collect().foreach{ row => println(row.getAs[String]("columnName") + " > " + row.getAs[Seq[String]]("inclusionSet").mkString(", "))}
   }
 }
