@@ -23,31 +23,39 @@ object Sindy {
       data.flatMap(row => row.split(";").zip(sepColumns)).toDF("value", "columnName")
     }
 
-    val completeData = inputs.map(file => mapFileToValuesAndColumnNames(file)).reduce(_.union(_))
+    val completeData = inputs
+      .map(file => mapFileToValuesAndColumnNames(file))
+      .reduce(_.union(_))
 
-    val aggregatedValues = completeData.groupBy("value").agg(collect_set("columnName"))
-
-    val columnSets = aggregatedValues.select("collect_set(columnName)")
-
-    val inclusionSetWithSelf = columnSets.withColumn("columnName", explode($"collect_set(columnName)"))
+    val inclusionSets = completeData
+      .groupBy("value")
+      .agg(collect_set("columnName"))
+      .select("collect_set(columnName)")
+      .withColumn("columnName", explode($"collect_set(columnName)"))
 
     def removeOwnColumnNameFromInclusionSet(row: Row): Seq[String] = {
-      row.getAs[Seq[String]]("collect_set(columnName)").filterNot(element => element == row.getAs[String]("columnName"))
+      row
+        .getAs[Seq[String]]("collect_set(columnName)")
+        .filterNot(element => element == row.getAs[String]("columnName"))
     }
 
-    val inclusionSet = inclusionSetWithSelf.map(row => (row.getAs[String]("columnName"), removeOwnColumnNameFromInclusionSet(row))).toDF("columnName", "inclusionSet")
+    val inclusionSet = inclusionSets
+      .map(row => (row.getAs[String]("columnName"), removeOwnColumnNameFromInclusionSet(row)))
+      .toDF("columnName", "inclusionSet")
 
-    val groupedInclusionSets = inclusionSet.groupBy("columnName").agg(collect_set("inclusionSet"))
-//    groupedInclusionSets.printSchema()
-//    groupedInclusionSets.show()
+    val groupedInclusionSets = inclusionSet
+      .groupBy("columnName")
+      .agg(collect_set("inclusionSet"))
 
-    val intersectedInclusionSet = groupedInclusionSets.map(row => (row.getAs[String]("columnName"), row.getAs[Seq[Seq[String]]]("collect_set(inclusionSet)").reduce(_.intersect(_)))).toDF("columnName", "inclusionSet")
-//    intersectedInclusionSet.printSchema()
-//    intersectedInclusionSet.show()
+    val intersectedInclusionSet = groupedInclusionSets
+      .map(row => (row.getAs[String]("columnName"), row.getAs[Seq[Seq[String]]]("collect_set(inclusionSet)")
+      .reduce(_.intersect(_))))
+      .toDF("columnName", "inclusionSet")
 
-    val filteredInclusionSet = intersectedInclusionSet.filter(row => row.getAs[Seq[String]]("inclusionSet").nonEmpty).toDF("columnName", "inclusionSet").orderBy("columnName")
-//    filteredInclusionSet.printSchema()
-//    filteredInclusionSet.show()
+    val filteredInclusionSet = intersectedInclusionSet
+      .filter(row => row.getAs[Seq[String]]("inclusionSet").nonEmpty)
+      .toDF("columnName", "inclusionSet")
+      .orderBy("columnName")
 
     filteredInclusionSet.collect().foreach{ row => println(row.getAs[String]("columnName") + " > " + row.getAs[Seq[String]]("inclusionSet").mkString(", "))}
   }
