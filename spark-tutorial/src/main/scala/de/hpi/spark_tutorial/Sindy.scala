@@ -26,25 +26,29 @@ object Sindy {
     val completeData = inputs.map(file => mapFileToValuesAndColumnNames(file)).reduce(_.union(_))
 
     val aggregatedValues = completeData.groupBy("value").agg(collect_set("columnName"))
-    aggregatedValues.printSchema()
-    aggregatedValues.show()
 
     val columnSets = aggregatedValues.select("collect_set(columnName)")
-    columnSets.printSchema()
-    columnSets.show()
 
-    val inclusionSetsWithSelf = columnSets.withColumn("columnName", explode($"collect_set(columnName)"))
-    inclusionSetsWithSelf.printSchema()
-    inclusionSetsWithSelf.show()
+    val inclusionSetWithSelf = columnSets.withColumn("columnName", explode($"collect_set(columnName)"))
 
-    def removeOwnColumnNameFromInclusionSet(columnName: String, inclusionSet: Seq[String]): Seq[String] = {
-      inclusionSet.filterNot(element => element == columnName)
+    def removeOwnColumnNameFromInclusionSet(row: Row): Seq[String] = {
+      row.getAs[Seq[String]]("collect_set(columnName)").filterNot(element => element == row.getAs[String]("columnName"))
     }
 
-    val inclusionSets = inclusionSetsWithSelf.map(row => removeOwnColumnNameFromInclusionSet(row.getAs[String]("columnName"), row.getAs[Seq[String]]("collect_set(columnName)")))
-    inclusionSets.printSchema()
-    inclusionSets.show()
+    val inclusionSet = inclusionSetWithSelf.map(row => (row.getAs[String]("columnName"), removeOwnColumnNameFromInclusionSet(row))).toDF("columnName", "inclusionSet")
 
-    
+    val groupedInclusionSets = inclusionSet.groupBy("columnName").agg(collect_set("inclusionSet"))
+//    groupedInclusionSets.printSchema()
+//    groupedInclusionSets.show()
+
+    val intersectedInclusionSet = groupedInclusionSets.map(row => (row.getAs[String]("columnName"), row.getAs[Seq[Seq[String]]]("collect_set(inclusionSet)").reduce(_.intersect(_)))).toDF("columnName", "inclusionSet")
+    intersectedInclusionSet.printSchema()
+    intersectedInclusionSet.show()
+
+//    val explodedInclusions = intersectedInclusionSet.withColumn("includedIn", explode($"inclusionSet")).select("columnName", "includedIn")
+//    explodedInclusions.printSchema()
+//    explodedInclusions.show()
+
+
   }
 }
