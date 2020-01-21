@@ -23,17 +23,28 @@ object Sindy {
       data.flatMap(row => row.split(";").zip(sepColumns)).toDF("value", "columnName")
     }
 
-    val completeData = inputs.map(file => mapFileToValuesAndColumnNames(file))reduce(_.union(_))
+    val completeData = inputs.map(file => mapFileToValuesAndColumnNames(file)).reduce(_.union(_))
 
     val aggregatedValues = completeData.groupBy("value").agg(collect_set("columnName"))
+    aggregatedValues.printSchema()
+    aggregatedValues.show()
 
     val columnSets = aggregatedValues.select("collect_set(columnName)")
+    columnSets.printSchema()
     columnSets.show()
 
     val inclusionSetsWithSelf = columnSets.withColumn("columnName", explode($"collect_set(columnName)"))
+    inclusionSetsWithSelf.printSchema()
     inclusionSetsWithSelf.show()
 
-//    val inclusionSets = inclusionSetsWithSelf.withColumn("includedIn", explode($"collect_set(columnName)"))
-//    inclusionSets.show()
+    def removeOwnColumnNameFromInclusionSet(columnName: String, inclusionSet: Seq[String]): Seq[String] = {
+      inclusionSet.filterNot(element => element == columnName)
+    }
+
+    val inclusionSets = inclusionSetsWithSelf.map(row => removeOwnColumnNameFromInclusionSet(row.getAs[String]("columnName"), row.getAs[Seq[String]]("collect_set(columnName)")))
+    inclusionSets.printSchema()
+    inclusionSets.show()
+
+    
   }
 }
