@@ -1,10 +1,7 @@
 package de.hpi.spark_tutorial
 
-import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}
-import org.apache.spark.sql.types.{IntegerType, StringType, StructField, StructType}
+import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.functions.{collect_set, explode}
-
-import scala.collection.GenIterable
 
 object Sindy {
 
@@ -12,31 +9,30 @@ object Sindy {
 
     import spark.implicits._
 
-    def mapFileToValuesAndColumnNames(file: String): DataFrame = {
-      val data = spark.read
-        .option("inferSchema", "true")
-        .option("header", "true")
-        .csv(file)
-        .as[String]
+    val completeData = inputs.map(file => {
+        val data = spark.read
+          .option("inferSchema", "false")
+          .option("header", "true")
+          .option("sep", ";")
+          .csv(file)
 
-      val sepColumns = data.columns.flatMap(row => row.split(";"))
-      data.flatMap(row => row.split(";").zip(sepColumns)).toDF("value", "columnName")
-    }
-
-    val completeData = inputs
-      .map(file => mapFileToValuesAndColumnNames(file))
+        val sepColumns = data.columns
+        data.flatMap(_.toSeq.asInstanceOf[Seq[String]].zip(sepColumns)).toDF("value", "columnName")
+      })
       .reduce(_.union(_))
+      .distinct()
 
     val inclusionSets = completeData
       .groupBy("value")
       .agg(collect_set("columnName"))
       .select("collect_set(columnName)")
+      .distinct()
       .withColumn("columnName", explode($"collect_set(columnName)"))
 
     def removeOwnColumnNameFromInclusionSet(row: Row): Seq[String] = {
       row
         .getAs[Seq[String]]("collect_set(columnName)")
-        .filterNot(element => element == row.getAs[String]("columnName"))
+        .filterNot(_ == row.getAs[String]("columnName"))
     }
 
     val inclusionSet = inclusionSets
@@ -47,16 +43,13 @@ object Sindy {
       .groupBy("columnName")
       .agg(collect_set("inclusionSet"))
 
-    val intersectedInclusionSet = groupedInclusionSets
+    val finalInclusionSet = groupedInclusionSets
       .map(row => (row.getAs[String]("columnName"), row.getAs[Seq[Seq[String]]]("collect_set(inclusionSet)")
       .reduce(_.intersect(_))))
       .toDF("columnName", "inclusionSet")
-
-    val filteredInclusionSet = intersectedInclusionSet
-      .filter(row => row.getAs[Seq[String]]("inclusionSet").nonEmpty)
-      .toDF("columnName", "inclusionSet")
+      .filter(_.getAs[Seq[String]]("inclusionSet").nonEmpty)
       .orderBy("columnName")
 
-    filteredInclusionSet.collect().foreach{ row => println(row.getAs[String]("columnName") + " > " + row.getAs[Seq[String]]("inclusionSet").mkString(", "))}
+    finalInclusionSet.collect().foreach{ row => println(row.getAs[String]("columnName") + " > " + row.getAs[Seq[String]]("inclusionSet").mkString(", "))}
   }
 }
